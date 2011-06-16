@@ -1,0 +1,26 @@
+void main() 
+{
+	char foo;
+	foo = '3';
+	
+	int bar;
+	
+	bar = {{{3;};};};
+	
+	bar =
+	{
+		int bar;
+		bar = 5;
+		bar;
+		6;
+		
+		bool b;
+		b = true;
+		{
+			bool c;
+			c = b;
+		};
+		
+		bar;
+	};
+}

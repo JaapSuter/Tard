@@ -1,0 +1,13 @@
+bool bar()
+{
+	true;
+}
+
+int foo()
+{
+	3;
+}
+
+void main() 
+{
+}

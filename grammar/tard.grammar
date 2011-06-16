@@ -1,0 +1,215 @@
+// --------------------------------------------------
+// Tard - Copyright 2005 Jaap Suter
+// --------------------------------------------------
+
+// --------------------------------------------------
+header "pre_include_hpp"
+{
+	#include "tard/detail/nodes.hpp"
+
+	#ifdef _MSC_VER
+		#pragma warning(disable:4512)
+		#pragma warning(disable:4100)
+		#pragma warning(disable:4511)
+		#pragma warning(disable:4244)
+		#pragma warning(disable:4127)
+	#endif
+}
+
+// --------------------------------------------------
+options
+{
+	language = "Cpp";
+}
+
+// --------------------------------------------------
+class tard_lexer extends Lexer;
+
+	options
+	{
+		defaultErrorHandler = false;
+		testLiterals = false;
+		k = 2;
+	}
+
+	WHITESPACE: (' ' | '\t' | ('\r' | '\n' | "\r\n") { newline(); })+
+	{ 
+		$setType(antlr::Token::SKIP); 
+	};
+	
+	PLUS       : '+';
+	DASH	   : '-';
+	STAR       : '*';
+	SLASH      : '/';
+	ASSIGN	   : "=";
+	SEMI       : ';';
+	COMMA      : ',';
+	L_CURL     : '{';
+	R_CURL     : '}';
+	L_PAREN    : '(';
+	R_PAREN    : ')';
+	NOT		   : '!';
+	LESS       : '<';
+	GREATER    : '>';
+	GREATER_EQ : ">=";
+	LESS_EQ    : "<=";
+	NOT_EQUALS : "!=";
+	EQUALS     : "==";
+	AND		   : "&&";
+	OR		   : "||";
+	TICK	   : "'";
+	QUOTE	   : '"';
+	
+	
+	INTEGER: ('0'..'9')+;
+	
+	IDENTIFIER options { testLiterals=true; } : ('a'..'z'|'A'..'Z'|'_') ('a'..'z'|'A'..'Z'|'0'..'9'|'_')*;
+	
+	CHARACTER: TICK ~'\'' TICK;
+	
+	STRING_: QUOTE (~'"')* QUOTE;
+		
+// --------------------------------------------------
+class tard_parser extends Parser;
+
+	options
+	{
+		defaultErrorHandler = false;
+		buildAST = true;
+		k = 1;
+		ASTLabelType = "node_ptr";
+	}
+	
+	tokens
+	{
+		VOID   = "void";
+		CHAR   = "char";
+		BOOL   = "bool";
+		STRING = "string";
+		INT    = "int";		
+		TRUE   = "true";
+		FALSE  = "false";
+		CONST  = "const";
+		CALL   = "call";
+		WRITE_ = "write";
+		READ_  = "read";
+		IF	   = "if";
+		ELSE   = "else";
+		WHILE  = "while";
+		
+		PROGRAM<AST=program>;
+		FUN_DEF<AST=fun_def>;
+		BLOCK<AST=block>;
+		VAR_DECL<AST=var_decl>;
+		VALUE<AST=value>;
+		WRITE<AST=write>;
+		READ<AST=read>;
+		BIN_OP<AST=bin_op>;
+		UN_OP<AST=un_op>;
+		ASSIGNMENT<AST=assignment>;
+		IF_STATEMENT<AST=if_statement>;
+		WHILE_STATEMENT<AST=while_statement>;
+	}
+	
+	program: (fun_def)+
+	{
+		#program = #([PROGRAM, "PROGRAM"], #program);
+	};
+	
+	fun_def: type identifier L_PAREN! R_PAREN! block
+	{
+		#fun_def = #([FUN_DEF, "FUN_DEF"], #fun_def);
+	};
+	
+	block: L_CURL! (statement)* R_CURL!
+	{
+		#block = #([BLOCK, "BLOCK"], #block);
+	};
+	
+	statement: (var_decl | expression) SEMI!;
+	
+	var_decl: type identifier
+	{
+		#var_decl = #([VAR_DECL, "VAR_DECL"], #var_decl);
+	};
+	
+	type: STRING<AST=type> | CHAR<AST=type> | VOID<AST=type> | BOOL<AST=type> | INT<AST=type>;
+		
+	expression: and_expr (options {greedy=true;} : OR and_expr)?
+	{
+		#expression = #([BIN_OP, "BIN_OP"], #expression);
+	};
+	
+	and_expr: compare_expr (options {greedy=true;} : AND compare_expr)?
+	{
+		#and_expr = #([BIN_OP, "BIN_OP"], #and_expr);
+	};
+	
+	compare_expr: add_expr (options {greedy=true;} : (LESS | GREATER | GREATER_EQ | LESS_EQ | NOT_EQUALS | EQUALS) add_expr)?
+	{
+		#compare_expr = #([BIN_OP, "BIN_OP"], #compare_expr);
+	};
+	
+	add_expr: mul_expr (options {greedy=true;} : (PLUS | DASH) mul_expr)*
+	{
+		#add_expr = #([BIN_OP, "BIN_OP"], #add_expr);
+	};
+	
+	mul_expr: sign_expr (options {greedy=true;} : (STAR | SLASH) sign_expr)*
+	{
+		#mul_expr = #([BIN_OP, "BIN_OP"], #mul_expr);
+	};
+	
+	sign_expr: (PLUS|DASH)? not_expr
+	{
+		#sign_expr = #([UN_OP, "UN_OP"], #sign_expr);
+	};
+	
+	not_expr: (NOT)* value
+	{
+		#not_expr = #([UN_OP, "UN_OP"], #not_expr);
+	};
+	
+	value: 
+	(
+	   literal 
+	 | assignment
+	 | read
+	 | write
+	 | L_PAREN! expression R_PAREN!
+	 | block
+	 | if_statement
+	 | while_statement
+	)
+	{
+		#value = #([VALUE, "VALUE"], #value);
+	};
+	
+	literal: TRUE<AST=literal> | FALSE<AST=literal> | INTEGER<AST=literal> | CHARACTER<AST=literal> | STRING_<AST=literal>;
+	
+	identifier: IDENTIFIER<AST=identifier>;
+	
+	assignment: identifier (ASSIGN! expression)?
+	{
+		#assignment = #([ASSIGNMENT, "ASSIGNMENT"], #assignment);
+	};
+	
+	write: WRITE_! L_PAREN! expression (COMMA! expression)* R_PAREN!
+	{
+		#write = #([WRITE, "WRITE"], #write);					
+	};
+	
+	read: READ_! L_PAREN! identifier (COMMA! identifier)* R_PAREN!
+	{
+		#read = #([READ, "READ"], #read);					
+	};
+	
+	if_statement: IF! L_PAREN! expression R_PAREN! ((expression ELSE) => expression ELSE! expression | expression)
+	{
+		#if_statement = #([IF_STATEMENT, "IF_STATEMENT"], #if_statement);
+	};
+	
+	while_statement: WHILE! L_PAREN! expression R_PAREN! expression
+	{
+		#while_statement = #([WHILE_STATEMENT, "WHILE_STATEMENT"], #while_statement);
+	};

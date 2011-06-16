@@ -1,0 +1,11 @@
+void main() 
+{
+	if (true)
+	{
+		int a;
+	}
+	else
+	{
+		a = 3;
+	};
+}

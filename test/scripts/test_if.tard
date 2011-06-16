@@ -1,0 +1,29 @@
+void main() 
+{
+	if (true) write(1);
+	if (true) write(2) else write(4);
+	if (false) write(2) else write(3);
+	
+	if (3 != 4) write(4) else {write(6);};
+	
+	int a;
+	a = if (true) 4 else 3;
+	
+	if ({int a; a = 5; a != 0;})
+	{
+		write(a);
+	}
+	else
+	{
+		a = -1;
+		write(a);
+	};
+	
+	if (false)
+		write(0)
+	else
+	if (false)
+		write(0)
+	else
+		write(6);
+}

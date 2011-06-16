@@ -1,0 +1,1015 @@
+\documentclass{report}
+\begin{document}
+
+\title{Tard}
+\author{Jaap Suter}
+\maketitle
+
+\tableofcontents
+
+\chapter{Introduction}
+
+Tard is a simple language developed as a hobby project. The three main goals were:
+
+\begin{itemize}
+    \item Learn more about compiler development
+    \item Evaluate ANTLR
+    \item Find out more about targeting the .NET virtual machine.
+\end{itemize}
+
+The documentation will draw some conclusions about these goals near
+the end, but will focus of the actual document is on the language
+and its implementation instead. The purpose of this document to give
+the user an overview of the project so he or she can understand the
+language, implementation and tests. Using this, the reader might be
+able to also draw conclusions on the power of ANTLR and the .NET
+virtual machine.
+
+Tard stands for Totally Awesome Rapid Deployment. This is a base jumping maneuver which just
+happened to be what was on my mind when this project was started. It has no relevance to language
+features or implementation details.
+
+\chapter{The Language}
+
+Tard is a simple language. It borrows many syntax elements from C but there are also
+a few important differences. It has currently no support for functions. The parser is capable
+of parsing multiple function definitions and does constraint checks on the application entry point. However,
+there is no support for calling functions, parameter lists or early returns. Time restrictions limited
+the amount of effort in this direction.
+
+What is left is an expression based language in which a program has one entry point:
+
+\begin{center}
+    \texttt{void main() \{ ...\} }
+\end{center}
+
+A program can have only one entry point (called \texttt{main}). The
+entry point takes no parameters, and returns void. The language
+supports the following basic types: \texttt{void}, \texttt{bool},
+\texttt{char}, \texttt{int}, \texttt{string}.
+
+A variable is introduced by declaring the type followed by the
+identifier. For example:
+
+\begin{center}
+    \texttt{int a;\\bool b;\\char c;\\string s;\\}
+\end{center}
+
+Variables need to be declared before they are used. Using variables
+is done in expressions. Every statement that is not variable
+declaration is an expression with resulting type (potentially
+\texttt{void}). Tard supports the following expressions:
+
+\begin{itemize}
+    \item \texttt{write(x0, x1, .., xn);} - Prints the values of the expressions to the screen
+    \item \texttt{read(x0, x1, .., xn);} - Acceps user input and stores it into the given variables
+    \item \texttt{x0 = x1 = ... = xn = expression} - Assignment
+    \item \texttt{+, -, *, /, \&\&, ==, !=, <=, <, >=, >, etc.} - All the usual mathematical and relational operators.
+    \item \texttt{\{list of expressions\}} - Compound statement, where the last expression is the value of the entire compound block
+    \item \texttt{if (boolean expression) expression [else expression]} - If statement with optional else clause.
+    \item \texttt{while (boolean expression) expression } - While statement
+\end{itemize}
+
+Since blocks are also expressions, blocks can be arbitrarily nested. Variables can be declared inside of a block
+and can have the same name as a variable in an enclosing block. Evaluating variables will always refer the most
+nearby declaration.
+
+\chapter{Problems Encountered}
+
+This section outlines some of the problems encountered in the development of Tard and explains their solutions.
+
+\section{ANTLR Tree Walkers}
+
+The ANTLR grammar file specifies a lexer and and a parser. The parser is setup so it builds an abstract syntax tree (AST). ANTLR allows
+the user to also specify a tree-walker in which action and rewrite rules can be embedded.
+
+There are two problems with these tree-walkers. The first is that ANTLR seems to have a restriction that a grammar file can
+only contain a single tree walker. No matter what was tried, ANTLR would not allow the definition of two separate tree walkers in
+a single file. Having two tree walkers is an obvious requirement because the contextual analysis is separated from the code generation fase.
+
+The second problem is that embedding actions inside of the tree-walkers becomes very confusing. Defining too much code inside of the grammar
+specification not only makes things harder to debug, it also complicates the distinction between the grammar and the actual compiler.
+
+Fortunately, ANTLR allows for so-called heterogeneous abstract syntax trees. In an heterogeneous AST every node can be it's own type. All node types
+are derived from a common base class, but each node can implement its own behaviour depending on its context and type. This allows for a very
+clean grammar file containing only a lexer and a parser. The parser definition contains rules on how to produce specific node type instances for
+different rules. When built, the AST is a gigantic polymorphic tree that allows for total customizability. The grammer contains a minimal amount
+of C++ code.
+
+Each node type in the tree implements at least two functions. The first one visit each node in the tree so they can all perform
+a full contextual analysis, thereby checking types and scope constraints. In this phase, the AST also generates information on which variables
+belong to what scope and what occurences refer to what declaration.
+
+The second function performs the code-generation. Again the entire polymorphic AST is visited and each node generates pieces of assembly meanwhile
+delegating code-generation tasks to child-nodes too.
+
+The resulting design is very clear and elegant. The grammar is solely responsible for lexing, parsing and AST construction. For each lanuguage
+construct there exists a distinct node-type implemented in C++ and responsible for contextual analysis and code-generation, split up in two or
+more functions.
+
+\section{Ambiguity and LL(K)}
+
+One goal of the grammar specification was that it would allow for an
+LL(1) parser. In ANTLR, lexers are parsers as well. For Tard, the
+lexer is LL(2) to easily make a distinction between \texttt{<=} and
+\texttt{<}. There is a single ambiguity left in the lexer related to
+newline handling. Depending on the platform, text files use
+\texttt{$\backslash$n}, \texttt{$\backslash$r} or
+\texttt{$\backslash$r$\backslash$n}. In practice, this ambiguity is
+never a problem.
+
+The actual parser for Tard is LL(1), which was the goal. There were
+two main problems with making the parser LL(1). The first one is
+related to assignments. Because assignments are also expressions,
+the rule \texttt{identifier = expression} is ambigious since the
+right-hand-side expression could contain another assignment, or just
+a lone identifier. The \texttt{if-then-else} construct poses another
+ambiguity due to the optional \texttt{else} part.
+
+Fortunately, ANTLR allows for special-case peeks into the token
+buffer. By decorating the production rule with a prediction set
+\texttt{identifier ASSIGN => assignment | identifier} the ambiguity
+is resolved and the parser can remain LL(1).
+
+\section{Left Hand Side of Assignments}
+
+Assignments are also expressions, which allows for chaining of
+assignments. For example: \texttt{x = y = z = 3 + 4;}. However, this
+causes an ambiguity that can not easily be resolved by updating the
+parser grammer. The straight forward grammar allows for constructs
+like \texttt{4 - x = y + 3 = 4 * y = 4}; which is obviously not
+correct. The solution is to perform extra checks on the
+left-hand-side of the assignment construct during the contextual
+analysis phase. Then, it can easily be detected and produce a
+diagnostic.
+
+\section{Nesting Of Blocks}
+
+Tard allows for nested blocks in which variable names can be reused
+for different actual variables. However, the underlying target
+machine (the .NET virtual machine) has no concept of nested blocks.
+Local variables are always declared at function scope. Therefore,
+all variables from all blocks in a function need to be collected and
+declared up front at the beginning of the function.
+
+To avoid name-collisions, we append the node-depth of each
+declaration to the actual variable name. In other words, the virtual
+machine won't refer to variable \texttt{x}, but to \texttt{x\_2} and
+\texttt{x\_3}. The context analysis phase uses the generic
+visitation pattern to visit all block expressions within each
+function to collect all the different variable declarations.
+
+\chapter{Syntax, Constraints and Semantics}
+
+This section defines some production rules in which * stands for
+zero-or-more, + for one-or-more, | for alternative and [] for optional. Literals are defined
+within quotes.
+
+\section{Program}
+
+A program is a collection of functions. All functions are fully
+checked for correctness and generate full code. However, without the
+ability to call other functions, the only function that is actually
+ever executed is the \texttt{main} function, e.g. the entry point.
+The production rule for a program is:
+
+\begin{verbatim}
+    program -> fun_def+
+\end{verbatim}
+
+There should be at least one function definition called
+\texttt{main} that returns \texttt{void}. Functions can't take
+parameters anyway, so the constraint that the entry point taks no
+parameters is implicit in the grammar.
+
+Upon execution of the program, the function called \texttt{main} is
+executed.
+
+\section{Functions}
+
+A function is a combination of a name, a return type and a block
+expression. A function can't take any parameters. The production
+rule is:
+
+\begin{verbatim}
+    fun_def -> type identifier "()" block
+\end{verbatim}
+
+The return type of the function needs to be in correspondence with
+the type of the block expression. There can be only one function
+definition for each name.
+
+When a function is called, its block expression is evaluated and the
+resulting value, if not \texttt{void} is left on the stack for the
+caller to use.
+
+\section{Blocks}
+
+A block is a list of staments enclosed in curly braces. Its
+production rule is:
+
+\begin{verbatim}
+    block -> "{" statement* "}"
+\end{verbatim}
+
+The result type of a block is equal to the last statement in the
+block. If the block is empty or it contains only variable
+declarations or the last expression has type \texttt{{{void}}}, the
+type of the block itself is \texttt{void}.
+
+When a block is evaluated, each statement is evaluated from top to
+botom. When a statement leaves a value on the stack it is popped
+off, unless it is the last stament in the block.
+
+\section{Statement}
+
+A statement is a variable declaration or an expression followed by a
+semi colon. The production rules is as follows:
+
+\begin{verbatim}
+    statement -> var_decl | expression ";"
+\end{verbatim}
+
+\section{Declarations}
+
+A variable declaration consists of a type and an identifier:
+\begin{verbatim}
+    var_decl -> type identifier
+\end{verbatim}
+
+Variable initialization can be done in a separate statement
+following the declaration. Within each block, there can be only one
+variable with a given name. Variables shadow variables with the same
+name in enclosing blocks. Void variables are not allowed.
+
+A variable declaration results in the compiler making room for it on
+the stack.
+
+\section{Types}
+
+A type can be one of the following:
+\begin{verbatim}
+    type -> "string"
+          | "char"
+          | "void"
+          | "bool"
+          | "int"
+\end{verbatim}
+
+\section{Expressions}
+
+An expression is an application and combination of operators and
+values. The production rules that define all the operators are:
+
+\begin{verbatim}
+    expression   -> and_expr ["||" and_expr]
+    and_expr     -> compare_expr ["&&" compare_expr]
+    compare_expr -> add_expr [("<" | ">" | "<=" | ">=" | "!=" | "==") add_expr]
+    add_expr     -> mul_expr ("+" | "-" mul_expr)*
+    mul_expr     -> sign_expr ("*" | "/" sign_expr)*
+    sign_expr    -> [ "+" | "-" ] not_expr
+    not_expr     -> "!"* value
+\end{verbatim}
+
+This set of production rules implicitly defines the precedence of
+operators. The precedence is defined similar to the ones found in
+most other languages
+
+The type constraints for binary operators are defined as in the
+following table. Lhs stands for left hand side and rhs for right
+hand side. Comparable means \texttt{int}, \texttt{bool} or
+\texttt{char}. Type of lhs means that it needs to have
+the same time as the left hand side of the operator.\\
+\\
+\begin{tabular}{|c|c|c|c|}
+  \hline
+  Operator & Lhs & Rhs & Result \\
+  \hline
+  +  & int & d & d \\
+  -  & int & int & int \\
+  *  & int & int & int \\
+  /  & int & int & int \\
+  <  & int & int & bool \\
+  >  & int & int& bool \\
+  >= & int & int & bool \\
+  <= & int & int & bool \\
+  == & comparable & type of lhs & bool \\
+  != & comparable & type of lhs & bool \\
+  \&\& & bool & bool & bool \\
+  || & bool & bool & bool \\
+  \hline
+\end{tabular}\\
+\\
+\\
+The type constraints for unary operators are defined in the following table.\\
+\\
+\begin{tabular}{|c|c|}
+    \hline
+    Operator & Operand \\
+    + & int \\
+    - & int \\
+    ! & bool \\
+    \hline
+ \end{tabular}\\
+\\
+\\
+The type of a complete expression is the type of the last \texttt{or\_expression}.
+
+The evaluation of an expression is done according to their intuitive
+meaning. Nothing is said about shortcircuiting of the boolean
+predicates. A compiler is free to do this or not, and no program
+should rely on behaviour either way.
+
+\section{Values}
+
+A value is something that can be used by operators to create more
+complicated expressions. The production rule is:
+
+\begin{verbatim}
+    value -> literal
+           | assignment
+           | read
+           | write
+           | "(" expression ")"
+           | block
+           | if_statement
+           | while_statement
+
+    literal -> "true"
+             | "false"
+             | integer
+             | character
+             | string
+\end{verbatim}
+
+The production rules for \texttt{integer}, \texttt{character},
+\texttt{string} are defined in the lexer and have their intuitive
+C-style meaning.
+
+Values can have type \texttt{void} which means they result in no
+value.
+
+\section{Assignment}
+
+An assignment is an identifier followed by an optional assigment:
+
+\begin{verbatim}
+    assignment -> identifier ["=" expression]
+\end{verbatim}
+
+Because identifiers are assignments are expressions, this allows for
+chaining of assignments, as in \texttt{x = y = 3}. Because the
+actual trailing assignment is optional, this rule also works for
+just references identifiers.
+
+Identifiers are defined in the lexer and have their intuitive
+C-style definition. Identifiers are introduced by a variable
+declaration. The variable declaratin needs to preceed the use of the
+identifier.
+
+The type of the right hand side expression needs to be the same as
+the type of the left hand side identifier. Ambigious chaining of
+ssignments as in \texttt{x = y + z = 3} is explicitly forbidden.
+
+Evaluating an assignment statemen proceeds as follows. If there is
+an assignment on the right hand side, the expression is evaluated.
+the resulting value is then stored into the memory location
+associated with the left hand side identifier.
+
+Then, regardless of whether or not there is a right hand side
+assignment, the value associated with the left hand side identifier
+is loaded, resulting in the value of the entire assignment
+expresssion.
+
+\section{Read and Write}
+
+Read and write statements are what allows the program to perform
+input and output. The production rules are:
+\begin{verbatim}
+    write -> "write" "(" expression ("," expression)* ")"
+    read  -> "read" "(" identifier ("," identifier)* ")"
+\end{verbatim}
+
+The \texttt{write} statement takes a variable length list of
+expressions. It evaluates every single one and prints it to the
+screen followed by a newline. The number of parameters must be at
+least one. If it is one, the resulting type and value are the type
+and value of the expression. If there are more than one parameters,
+the resulting type of a \texttt{write} expression is void.
+
+The \texttt{read} statement takes a variable length list of
+identifiers of at least length one. The identifiers must refer to a
+variable declared earlier in the program. The value read must have
+the same type as the type of the variable declaration, otherwise a
+runtime exception is thrown. The value is then stored in the memory
+location associated with the variable.
+
+The return type and value of a read is equal to the first parameter
+if only one parameters is given, \texttt{void} otherwise.
+
+\section{If Statement}
+
+An if statement allows for conditional execution of code. It
+consists of a condition, a then-expression and an optional
+else-expression.
+\begin{verbatim}
+    if_statement -> "if" "(" expression ")" expression ["else" expression]
+\end{verbatim}
+
+The scope of the variables declared in the condition extends to all
+three expressions. Variables declared in the other two expressions
+are limited to their own scope.
+
+The type of the condition must be boolean. If the condition is true,
+the then-expression is evaluated and the optional else-expression is
+ignored. If the condition is false, the then-expression is ignored,
+and the optional else-expression is evaluated.
+
+The type of the if statement is void if the type of the
+then-expression and else-expression are different of if there is no
+else-expression. Otherwise the type is equal to the type of the
+then- and else-expressions and the resulting value is the value of
+whatever expression is executed.
+
+\section{While Statement}
+
+A while statement allows for loop constructions. It consists of a
+condition-expression that must be of boolean type, and a
+body-expression that can be of any type.
+
+\begin{verbatim}
+    while_statement -> "while" "(" expression ")" expression
+\end{verbatim}
+
+Regardless of the body, the type of the entire while statement is
+always \texttt{void}.
+
+The scope of the variables declared in the condition extends to the
+body. Variables declared in the body are limited to their own scope.
+
+Upon evaluation of the while statement, the condition and body are
+evaluated one after another in a loop, until the condition evaluates
+to false.
+
+\chapter{Code Generation}
+
+This section provides details on how code is generated for each of
+the different language constructs. This section is heavily .NET CLR
+dependent, although the syntax of the .NET Microsoft Intermediate
+Language is quite straightforward.
+
+\section{Code Templates}
+
+The following list gives a pseudo-code overview of all the code
+templates used to generate different constructs. Everything in
+between quotes is literal .NET intermediate language code. The \#\#
+operator means a literal concatenation of strings. For exact details
+and precise code templates, refer to the \texttt{generate\_code}
+function of the actual implementation of ech language construct.
+
+\subsection{Program}
+
+\begin{verbatim}
+    program -> define[fun_def rest_of_functions] =
+        define[fun_def]
+        if not empty rest_of_functions:
+            define[rest_of_functions]
+\end{verbatim}
+
+\subsection{Function Definition}
+
+\begin{verbatim}
+    fun_def -> define[type identifier block] =
+        ".method static public" type identifier "il managed"
+
+        if is entry point function
+            ".entrypoint"
+        ".maxstack 128"
+        ".locals init"
+        "("
+            extract_variable_declarations[block]
+        ")"
+
+        evaluate[block]
+
+        if type of block not is void
+            "pop"
+
+        "ret"
+        "}"
+\end{verbatim}
+
+\subsection{Block}
+
+\begin{verbatim}
+    block -> extract_variable_declarations[statement rest_of_statements]
+
+        if statement is var_decl
+            define[var_decl]
+
+        if statement is block
+            extract_variable_declarations[block]
+
+        if not empty rest_of_statements
+            extract_variable_declarations[rest_of_statements]
+
+    block -> evaluate[statement rest_of_statements] =
+
+        if statement not is var_decl
+            evaluate[statement]
+
+        if not empty rest_of_statements
+
+            if type of statement is not void
+                "pop"
+
+            evaluate[rest_of_statements]
+\end{verbatim}
+
+\subsection{Variable Declaration}
+\begin{verbatim}
+    var_decl -> define[type identifier] =
+
+        type identifier ## depth_of_var_decl_block ","
+\end{verbatim}
+
+\subsection{Expression}
+
+\begin{verbatim}
+
+    binary_expression -> evaluate[lhs op rhs] =
+
+        evaluate[lhs]
+        evaluate[rhs]
+        op
+
+    unary_expression -> evaluate[operand operator] =
+        evaluate[operand]
+        operator
+\end{verbatim}
+
+\subsection{Assignment}
+\begin{verbatim}
+    assignment -> evaluate[lhs optional_assignment] =
+
+        if optional_assignment
+            evaluate optional_assignment
+            "strloc" internal_name[lhs]
+
+        "ldloc" internal_name[lhs]
+
+    identifier -> internal_name[name] =
+
+        name ## depth of look_up_closest_var_decl_with[name]
+\end{verbatim}
+
+\subsection{Read}
+\begin{verbatim}
+    read -> evaluate[identifier rest_of_identifiers] =
+
+        "call string [mscorlib]System.Console::ReadLine()"
+
+        if type of identifier not is string
+            "call int32 [mscorlib]System.Int32::Parse(string)"
+
+        if total number of parameters is one
+            "dup"
+
+            "stloc" internal_nam[identifier]
+
+        if not empty rest_of_identifiers
+            evaluate[rest_of_identifiers]
+\end{verbatim}
+
+\subsection{Write}
+\begin{verbatim}
+    write -> evaluate[expression rest_of_expression] =
+
+        evaluate[expression]
+
+        if total number of parameters is one
+            "dup"
+
+        "call void [mscorlib]System.Console::WriteLine("
+        type of expression
+        ")"
+
+        if not empty rest_of_identifiers
+            evaluate[rest_of_identifiers]
+\end{verbatim}
+
+\subsection{If Statement}
+\begin{verbatim}
+    if -> evaluate[condition then else] =
+
+        label_id = unique_label_for_this_if_statements
+
+        evaluate[condition]
+
+        "brzero else_" ## label_id
+
+        evaluate[then]
+
+        if type of if is void and type of then is void
+            "pop"
+
+        if else
+            "br skip_else_" ## label_id
+            "else_" ## label_id ":"
+            evaluate[else];
+            if type of if is void and type of else is void
+                "pop"
+            "skip_else_" ## label_id ":"
+        else
+            "else_" ## label_id ":"
+\end{verbatim}
+
+\subsection{While Statement}
+\begin{verbatim}
+    while -> evaluate[condition body] =
+
+        label_id = unique_label_for_this_if_statements
+
+        "while_begin_" ## label_id ":"
+        evaluate[condition]
+        "brzero while_end_" ## label_id
+        evaluate[body]
+        if type of body is void
+            "pop"
+        "br while_begin_" ## label_id
+        "while_end_" ## label_id
+\end{verbatim}
+
+\chapter{The Implementation}
+
+The implementation is quite straightforward. The public interface is
+defined in two header files, one is the compiler and the other one
+defines the exceptions that the compiler can generate.
+
+The core of the compiler is defined inside of \texttt{detail}
+headers. There is a single base class called \texttt{node} that is
+derived from the \texttt{ANTLR::CommonAST} type. This \texttt{node}
+type defines the common interface that all language constructs
+share, as well as some utility funtions.
+
+Every language construct derives from \texttt{node} and implements
+its own specialization for both context analysis as well as code
+generation. The actual node class is never instantiated as only
+derived classes are used.
+
+Inside the compiler, an ANTLR lexer and a parser are instantiated.
+These are used to parse the input stream and create the abstract
+syntax tree.
+
+Then, the AST does an entire context analysis pass making sure that
+the program is semantically correct. If this succeeds, another pass
+is done over the now-decorated AST in which each node generates code
+and sends it to the given output stream.
+
+The resulting output is a well-formed .NET intermediate language
+program that can be assembled by \texttt{ilasm.exe} into an
+executable. More information about this step can be found in the
+\texttt{readme.txt} found in the Tard root directory.
+
+If an error occurs during the compilation fase, either a parse error
+or a contextual error, an exception is thrown from the
+\texttt{compile} function. The exception will be of type
+\texttt{tard\_exception} and have an enumeration indiciating the
+type of error. No other information is stored in the exception but
+it would be trivial to decorate it with error specific information,
+e.g. a string explaining the problem. For testing purposes, the
+enumeration suffices.
+
+\chapter{Testing}
+
+The compiler comes with an extensive suite of tests. The tests can
+be categorized in one of three categories, \texttt{parse\_error},
+\texttt{context\_error}, \texttt{well\_formed}. There is one special
+well formed program called \texttt{large\_program} that aims to pack
+many different Tard features in to a single program. All the tests
+are located in the \texttt{tard/test/scripts} directory.
+
+Since the compiled programs execute on the .NET virtual machine, no
+effort is spend testing runtime errors. A division by zero on the
+virtual machine will simply generate the appropiate .NET exception,
+which clearly lies outside of the Tard domain.
+
+\section{Parse Error Tests}
+
+Since ANTLR takes care of the lexing and parsing itself, there is
+not that much to test as far as parse errors go. The two simple
+tests for parse errors test a garbage program, as well as a program
+in which the number of opening and closing parenthesis are
+mismatched.
+
+\subsubsection*{test\_parse\_error\_garbage}
+\subsubsection*{test\_parse\_error\_paren\_mismatch}
+
+It is assumed that if these two programs manage to throw the proper
+\texttt{parse\_error} exception, the ANTLR parser is working
+correctly.
+
+\section{Context Error Tests}
+
+Context errors are much more common and obviously not caught by
+ANTLR. Therefore, the test-suite comes with a large number of
+context error specific tests.
+
+\subsubsection*{test\_context\_error\_multiple\_entry\_points}
+
+This tests makes sure the compiler detects it if a program
+implements more than one entry point.
+
+\subsubsection*{test\_context\_error\_entry\_point\_signature}
+
+This test makes sure the compiler detects a signature mismatch for
+the application entry point.
+
+\subsubsection*{test\_context\_error\_define\_before\_use}
+
+Makes sure the compiler can detect when a variable is used before it
+is defined.
+
+\subsubsection*{test\_context\_error\_multiply\_defined\_symbol}
+
+Detects when two variables of the same name are declared in the same
+scope.
+
+\subsubsection*{test\_context\_error\_lhs\_of\_assignment}
+
+Detects when the left hand side of an assignment statement is more
+than just a simple identifier.
+
+\subsubsection*{test\_context\_error\_assign\_bool\_to\_int}
+
+Detects a type mismatch, trying to convert a boolean to an integer.
+
+\subsubsection*{test\_context\_error\_assign\_int\_to\_bool}
+
+Detects a type mismatch, trying to an integer to a boolean.
+
+\subsubsection*{test\_context\_error\_mix\_int\_and\_bool}
+
+Detects a type mismatch, trying to us an integer and a boolean
+inside of a single binary expression.
+
+\subsubsection*{test\_context\_error\_mix\_bool\_and\_int}
+
+Detects a type mismatch, trying to us an integer and a boolean
+inside of a single binary expression.
+
+\subsubsection*{test\_context\_error\_multi\_write\_in\_expression}
+
+Makes sure that a write of multiple values has type void and can't
+be used in expressions.
+
+\subsubsection*{test\_context\_error\_undefined\_identifier}
+
+Makes sure that undeclared variables can't be used.
+
+\subsubsection*{test\_context\_error\_if\_scope\_error}
+
+Detects a scoping problem in the if-statement. Trying to use a value
+declared in the then-expression inside of the else-expression.
+
+\subsubsection*{test\_context\_error\_if\_condition\_type\_error}
+
+Makes sure the compiler can detect if the condition of the if
+statement is not boolea.
+
+\subsubsection*{test\_context\_error\_ambigious\_if\_is\_void}
+
+Makes sure that the return type of an ambigious if is void.
+
+\section{Well Formed Programs}
+
+The following program (and the \texttt{large\_program}) test that
+certain features of the language actually do work.
+
+\subsubsection*{test\_empty\_program}
+
+Tests that an empty program with just an entry point that doens't do
+anything can compile and run. This is the simplest possible program.
+
+\subsubsection*{test\_multiple\_fun\_defs}
+
+Tests that multiple function definitions are allowed.
+
+\subsubsection*{test\_string}
+
+Tests reading and writing of string types. This test is interactive
+since the \texttt{read} command is used.
+
+\subsubsection*{test\_var\_decl}
+
+This test does some complicated variable declarations in different
+scopes of different nesting, also testing variable shadowing.
+
+\subsubsection*{test\_assignment}
+
+This tests assignments of different types and chaining of
+assignments.
+
+\subsubsection*{test\_expression}
+
+This tests some complicated mathematical and logical expressions.
+This test is inter-active since the read command is used.
+
+\subsubsection*{test\_write\_expression}
+
+This test makes sure we can write a complicated expression.
+
+\subsubsection*{test\_write\_as\_expression}
+
+This test makes sure we can use a single parameter write statement
+as an expression of non-void type.
+
+\subsubsection*{test\_if}
+
+This test does some miscallenous testing of the if-statement. It
+should print the numbers one to six.
+
+\subsubsection*{test\_while}
+
+This test exercises the while statement.
+
+\section{Large Program}
+
+The large program test is an attempt at creating a little
+application that pretends to do something useful, along the way
+combining several different elements of Tard and demonstrating
+different language constructs.
+
+\subsection{test\_large\_program}
+
+This large program is a simple guess-the-number game. The user is
+asked to enter the maximum number of tries allowed and a random
+number. Then another user has to guess numbers repeatedly until he
+guesses it, which makes him the winner, or until he runs out of
+tries in which he becomes the loser. After each guess, the program
+will say whether the number is greater or less than the actual
+number.
+
+Admittedly, it's not a very impressive program, but it demonstrates
+some features very neatly. What follows is the definition of this
+program:
+
+\begin{verbatim}
+void main()
+{
+    write("------------------------------------------------");
+    write("            THE GUESSING GAME                   ");
+    write("------------------------------------------------");
+
+    int num_tries;
+    write("please enter the maximum number of guesses allowed");
+    read(num_tries);
+
+    int rand;
+    write("please enter a random number");
+    read(rand);
+
+    bool guessed_it;
+    guessed_it = false;
+
+    while(!guessed_it && num_tries > 0)
+    {
+        write("please guess what the number is");
+        int guess;
+        read(guess);
+
+        if (guess > rand)
+        {
+            write("the number is smaller");
+        }
+        else
+        if (guess < rand)
+        {
+            write("the number is bigger");
+        }
+        else
+        {
+            guessed_it = true;
+        };
+
+        num_tries = num_tries - 1;
+
+        if (!guessed_it)
+        {
+            write("number of tries you have left:");
+            write(num_tries);
+        };
+    };
+
+    if (guessed_it)
+        write("you are the winner")
+    else
+        write("you lost");
+}
+\end{verbatim}
+
+\newpage
+
+\subsection{Example Test Output}
+
+The following is the screen output of a sample run of the large test
+program.
+
+\begin{verbatim}
+------------------------------------------------
+THE GUESSING GAME
+------------------------------------------------
+
+please enter the maximum number of guesses allowed
+
+5
+
+please enter a random number
+
+7
+
+please guess what the number is
+
+3
+
+the number is bigger
+
+number of tries you have left:
+
+4
+
+please guess what the number is
+
+9
+
+the number is smaller
+
+number of tries you have left:
+
+3
+
+please guess what the number is
+
+6
+
+the number is bigger
+
+number of tries you have left:
+
+2
+
+please guess what the number is
+
+7
+
+number of tries you have left:
+
+1
+
+you are the winner
+
+
+\end{verbatim}
+
+\chapter{Conclusion}
+
+Tard is a simple language and compiler. It is developed as an
+experiment to gain more experience in compiler writing as well as
+gain insight in usign ANTLR and targeting the .NET virtual machine.
+
+Tard as a language itself is far from complicated although it has
+some interesting scope-rules. The fact that all statements are also
+expressions also introduces some intresting complications. It would
+be relatively easy to extend Tard with some language features like
+function calls, parameterized functions and const declarations.
+Other features like arrays, records or pointers would be
+significantly harder.
+
+ANTLR is a great code-generator for building parsers and lexers. It
+certainly outperforms Yacc and Bison in terms of user friendliness
+and power. The Boost Spirit library is another parser framework that
+I have experience with, and it remains my preferred choice for
+writing parsers. Embedding the code generator inside the actual
+compiler has many benefits.
+
+The .NET virtual machine, or execution engine as Microsoft calls it
+since it does just-in-time compiling, is a very easy target to
+develop for. The documentation is quite excellent and the
+\texttt{ilasm.exe} compiler is a great tool to turn intermediate
+code into a final executable. The .NET execution engine will remain
+my platform of choice for targeting languages. It's only drawback is
+its lack of portability.
+
+Previously I had written a parser, interpreter, compiler and
+specific virtual machine for another language called Lean. This was
+an S-expression based function language like Lisp and Scheme. Such a
+language is much easier to develop since the grammar leaves very
+little room for ambiguity. I am considering to port Lean to the .NET
+runtime and generate code in Microsoft Intermediate Language.
+
+All in all, Tard was a good learning experience to see that a lot of
+work has to be done in between specifying a grammar and actually
+generating an executable. Especially so for imperative languages,
+compared to functional languages, due to their heavy context
+sensitivity and ambiguities.
+\end{document}

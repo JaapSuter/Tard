@@ -1,0 +1,21 @@
+void main()
+{
+	int p; p = 3 + 4 * 5;	
+	int q; q = (3 - 4) / 7 * 7 * -9;
+	int r; r = +q - -4 - p;
+	
+	bool a; a = 3 < 4;
+	bool b; b = true || false;
+	bool c; c = true && true;
+	bool d; d = 3 == 4;
+	
+	c = 3 <= 4;
+	bool z; z = r != 3;
+	
+	write(a, b, c, d, p, q, r, z);
+	
+	int m;
+	int n;
+	read(m, n, a, b);
+	write(m, n, b, a);
+}

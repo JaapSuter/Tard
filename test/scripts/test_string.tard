@@ -1,0 +1,9 @@
+void main()
+{
+	write("foobar");
+	string a;
+	a = "blahblah";
+	write(a, 3);
+	read(a);
+	write(a);
+}

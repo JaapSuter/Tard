@@ -1,0 +1,14 @@
+void main() 
+{
+	bool c;
+	c = true;
+	
+	int a;
+	a = 4;
+	
+	int b;
+	b = 5;
+	
+	a = b = 2;
+	write(a, b);
+}

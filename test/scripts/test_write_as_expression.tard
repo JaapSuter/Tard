@@ -1,0 +1,11 @@
+void main() 
+{
+	int b;
+	b = write(3);
+	write(b);
+	
+	char j; j = 'j';
+	char a; a = 'a';
+	char p; p = 'p';
+	write(j, a, 'a', p);
+}

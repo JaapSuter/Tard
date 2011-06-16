@@ -1,0 +1,51 @@
+void main() 
+{
+	write("------------------------------------------------");
+	write("            THE GUESSING GAME                   ");
+	write("------------------------------------------------");
+
+	int num_tries;
+	write("please enter the maximum number of guesses allowed");
+	read(num_tries);
+	
+	int rand; 
+	write("please enter a random number");
+	read(rand);
+	
+	bool guessed_it;
+	guessed_it = false;	
+	
+	while(!guessed_it && num_tries > 0)
+	{
+		write("please guess what the number is"); 
+		int guess;
+		read(guess);
+		
+		if (guess > rand)
+		{
+			write("the number is smaller");
+		}
+		else		
+		if (guess < rand)
+		{
+			write("the number is bigger");
+		}
+		else
+		{
+			guessed_it = true;
+		};
+		
+		num_tries = num_tries - 1;		
+				
+		if (!guessed_it)
+		{
+			write("number of tries you have left:");
+			write(num_tries);
+		};
+	};
+	
+	if (guessed_it)
+		write("you are the winner")
+	else
+		write("you lost");
+}
